@@ -1,0 +1,65 @@
+- name: Install the k3s control plane
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=stable sh -s - server \
+      --write-kubeconfig-mode 644 \
+      --node-ip "{{ private_ip_address }}" \
+      --tls-san "{{ private_ip_address }}"
+  args:
+    creates: /usr/local/bin/k3s
+    executable: /bin/bash
+
+- name: Wait until the Kubernetes API answers
+  ansible.builtin.command: k3s kubectl get nodes
+  register: k3s_nodes
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: k3s_nodes.rc == 0
+
+- name: Publish Traefik on NodePort 30080
+  ansible.builtin.copy:
+    src: traefik-config.yaml
+    dest: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Wait until Traefik listens on 30080
+  ansible.builtin.command: >-
+    k3s kubectl -n kube-system get svc traefik
+    -o jsonpath={.spec.ports[?(@.name=="web")].nodePort}
+  register: traefik_nodeport
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: traefik_nodeport.stdout == "30080"
+
+- name: Read the node token
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: k3s_token_raw
+  no_log: true
+
+- name: Store the node token on the controller
+  ansible.builtin.copy:
+    content: "{{ k3s_token_raw.content | b64decode | trim }}\n"
+    dest: "{{ playbook_dir }}/.k3s-token"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Read the kubeconfig
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/k3s.yaml
+  register: kubeconfig_raw
+
+- name: Save the kubeconfig on the controller
+  ansible.builtin.copy:
+    content: "{{ kubeconfig_raw.content | b64decode | regex_replace('https://[^:]+:6443', 'https://127.0.0.1:6443') }}"
+    dest: "{{ playbook_dir }}/kubeconfig"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  no_log: true

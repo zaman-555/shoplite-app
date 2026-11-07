@@ -1,0 +1,7 @@
+- name: Bootstrap the control plane
+  ansible.builtin.import_tasks: server.yml
+  when: k3s_mode == "server"
+
+- name: Join a worker
+  ansible.builtin.import_tasks: agent.yml
+  when: k3s_mode == "agent"

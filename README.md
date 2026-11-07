@@ -515,3 +515,10 @@ Leave these at the defaults while you learn the happy path. To try one, edit its
 | `make down` | Stop and remove containers; keep the Postgres volume |
 | `make test` | Automatic unit tests. Fakes only. The stack can be stopped |
 | `make smoke` | Automatic smoke test. Real containers, one order, must reach `COMPLETED` |
+
+## Later milestones
+
+| Guide | What it covers |
+|---|---|
+| [README-linux.md](README-linux.md) | Ubuntu users, SSH, permissions, the nightly backup, and UFW |
+| [README-aws.md](README-aws.md) | Terraform VPC, private k3s nodes, the load balancer, ECR, and the Ansible bootstrap |

@@ -1,0 +1,5 @@
+bucket         = "shoplite-tfstate-ACCOUNT_ID"
+key            = "shoplite/terraform.tfstate"
+region         = "eu-central-1"
+dynamodb_table = "shoplite-tfstate-lock"
+encrypt        = true

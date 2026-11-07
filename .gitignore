@@ -4,3 +4,12 @@ __pycache__/
 .mypy_cache/
 *.pyc
 .DS_Store
+
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+terraform.tfvars
+backend.hcl
+ansible/kubeconfig
+ansible/.k3s-token

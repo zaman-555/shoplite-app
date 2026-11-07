@@ -1,0 +1,130 @@
+- name: Create the ops group
+  ansible.builtin.group:
+    name: ops
+    system: true
+
+- name: Create the deploy account with a locked password
+  ansible.builtin.user:
+    name: deploy
+    group: ops
+    shell: /bin/bash
+    create_home: true
+    password_lock: true
+
+- name: Install the SSH drop-in
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../linux/sshd_config"
+    dest: /etc/ssh/sshd_config.d/99-shoplite.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload ssh
+
+- name: Validate the SSH configuration
+  ansible.builtin.command: sshd -t
+  changed_when: false
+
+- name: Reload SSH after the drop-in is valid
+  ansible.builtin.meta: flush_handlers
+
+- name: Install packages used by the host policy
+  ansible.builtin.apt:
+    name:
+      - acl
+      - ufw
+    state: present
+    update_cache: true
+
+- name: Create the ShopLite log directory
+  ansible.builtin.file:
+    path: /var/log/shoplite
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Grant the ops group read and execute on the log directory
+  ansible.builtin.command: setfacl -m g:ops:r-x /var/log/shoplite
+  changed_when: false
+
+- name: Allow forwarded traffic so pod networking is not dropped
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: "^DEFAULT_FORWARD_POLICY="
+    line: 'DEFAULT_FORWARD_POLICY="ACCEPT"'
+
+- name: Allow SSH, HTTP, and HTTPS
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "22"
+    - "80"
+    - "443"
+
+- name: Allow Kubernetes traffic from the VPC
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ vpc_cidr }}"
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+  loop:
+    - { port: "6443", proto: tcp }
+    - { port: "10250", proto: tcp }
+    - { port: "30080", proto: tcp }
+    - { port: "8472", proto: udp }
+
+- name: Allow pod and service traffic
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item }}"
+  loop:
+    - "{{ k3s_pod_cidr }}"
+    - "{{ k3s_service_cidr }}"
+
+- name: Deny other inbound traffic and enable the firewall
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+
+- name: Allow outbound traffic
+  community.general.ufw:
+    policy: allow
+    direction: outgoing
+
+- name: Install the backup script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../linux/systemd/shoplite-backup.sh"
+    dest: /usr/local/bin/shoplite-backup.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the backup service
+  ansible.builtin.copy:
+    src: shoplite-backup.service
+    dest: /etc/systemd/system/shoplite-backup.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the backup timer
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../linux/systemd/shoplite-backup.timer"
+    dest: /etc/systemd/system/shoplite-backup.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable the nightly backup on the control plane
+  ansible.builtin.systemd:
+    name: shoplite-backup.timer
+    enabled: true
+    state: started
+  when: "'control_plane' in group_names"

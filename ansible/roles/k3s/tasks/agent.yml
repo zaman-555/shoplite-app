@@ -1,0 +1,43 @@
+- name: Check whether this worker has already joined
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s-agent.service
+  register: k3s_agent_unit
+
+- name: Join this worker to the cluster
+  when: not k3s_agent_unit.stat.exists
+  block:
+    - name: Read the cluster token from the controller
+      ansible.builtin.slurp:
+        src: "{{ playbook_dir }}/.k3s-token"
+      delegate_to: localhost
+      become: false
+      register: k3s_token_file
+      no_log: true
+
+    - name: Copy the node token onto the worker
+      ansible.builtin.copy:
+        content: "{{ k3s_token_file.content | b64decode | trim }}\n"
+        dest: /root/k3s-token
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Install the k3s agent
+      ansible.builtin.shell: |
+        set -euo pipefail
+        token="$(cat /root/k3s-token)"
+        curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=stable \
+          K3S_URL="https://{{ cp_ip }}:6443" \
+          K3S_TOKEN="${token}" \
+          sh -s - agent --node-ip "{{ private_ip_address }}"
+      args:
+        executable: /bin/bash
+      vars:
+        cp_ip: "{{ hostvars[groups['control_plane'][0]].private_ip_address }}"
+  always:
+    - name: Remove the node token from the worker
+      ansible.builtin.file:
+        path: /root/k3s-token
+        state: absent
+      when: not k3s_agent_unit.stat.exists

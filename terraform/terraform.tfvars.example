@@ -1,0 +1,10 @@
+aws_region         = "eu-central-1"
+name               = "shoplite"
+vpc_cidr           = "10.0.0.0/16"
+instance_type      = "t3.small"
+nat_instance_type  = "t3.nano"
+budget_alert_email = "you@example.com"
+
+# Uncomment both lines only when the hosted zone already exists.
+# domain_name     = "shop.example.com"
+# route53_zone_id = "Z0123456789ABCDEFGHIJ"

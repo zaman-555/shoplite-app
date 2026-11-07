@@ -1,0 +1,21 @@
+# Inventory hostname is the instance id. Session Manager uses that id.
+# Do not set ansible_host to the private IP.
+# Change the region if terraform aws_region is not eu-central-1.
+plugin: amazon.aws.aws_ec2
+regions:
+  - eu-central-1
+filters:
+  tag:project:
+    - shoplite
+  instance-state-name:
+    - running
+exclude_filters:
+  - tag:Role:
+      - nat
+hostnames:
+  - instance-id
+keyed_groups:
+  - key: tags.Role
+compose:
+  ansible_connection: "'aws_ssm'"
+  ansible_aws_ssm_region: placement.region

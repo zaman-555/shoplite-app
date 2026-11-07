@@ -1,0 +1,14 @@
+- name: Install containerd
+  ansible.builtin.apt:
+    name:
+      - containerd
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+
+- name: Enable the container runtime
+  ansible.builtin.systemd:
+    name: containerd
+    enabled: true
+    state: started

@@ -1,0 +1,35 @@
+- name: Harden every Kubernetes node and install the container runtime
+  hosts: control_plane:worker
+  gather_facts: true
+  become: true
+  pre_tasks:
+    - name: Require the Session Manager transfer bucket
+      ansible.builtin.assert:
+        that:
+          - lookup("env", "SSM_BUCKET") | length > 0
+        fail_msg: Export SSM_BUCKET to the value of terraform output ansible_ssm_bucket.
+      delegate_to: localhost
+      become: false
+      run_once: true
+  roles:
+    - harden
+    - container_runtime
+
+- name: Bootstrap the k3s control plane
+  hosts: control_plane
+  gather_facts: false
+  become: true
+  roles:
+    - role: k3s
+      vars:
+        k3s_mode: server
+
+- name: Join the worker nodes
+  hosts: worker
+  gather_facts: false
+  become: true
+  serial: 1
+  roles:
+    - role: k3s
+      vars:
+        k3s_mode: agent
