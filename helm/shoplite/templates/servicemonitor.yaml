@@ -1,0 +1,39 @@
+{{- if .Values.metrics.serviceMonitor }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "shoplite.fullname" . }}-catalog-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: catalog-api
+    {{- include "shoplite.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalog-api
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      honorLabels: true
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "shoplite.fullname" . }}-order-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: order-worker
+    {{- include "shoplite.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: order-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      honorLabels: true
+{{- end }}

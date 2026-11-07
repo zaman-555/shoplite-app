@@ -521,4 +521,4 @@ Leave these at the defaults while you learn the happy path. To try one, edit its
 | Guide | What it covers |
 |---|---|
 | [README-linux.md](README-linux.md) | Ubuntu users, SSH, permissions, the nightly backup, and UFW |
-| [README-aws.md](README-aws.md) | Terraform VPC, private k3s nodes, the load balancer, ECR, and the Ansible bootstrap |
+| [README-aws.md](README-aws.md) | Terraform, Ansible, Helm, and the GitHub Actions / Argo CD flow |

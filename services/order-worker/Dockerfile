@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt
 COPY services/order-worker/config.py /app/config.py
 COPY services/order-worker/logging_config.py /app/logging_config.py
 COPY services/order-worker/metrics.py /app/metrics.py
+COPY services/order-worker/tracing.py /app/tracing.py
 COPY services/order-worker/orders_queue.py /app/orders_queue.py
 COPY services/order-worker/db.py /app/db.py
 COPY services/order-worker/worker.py /app/worker.py
@@ -44,6 +45,7 @@ WORKDIR /app
 COPY --chown=app:app services/order-worker/config.py /app/config.py
 COPY --chown=app:app services/order-worker/logging_config.py /app/logging_config.py
 COPY --chown=app:app services/order-worker/metrics.py /app/metrics.py
+COPY --chown=app:app services/order-worker/tracing.py /app/tracing.py
 COPY --chown=app:app services/order-worker/orders_queue.py /app/orders_queue.py
 COPY --chown=app:app services/order-worker/db.py /app/db.py
 COPY --chown=app:app services/order-worker/worker.py /app/worker.py

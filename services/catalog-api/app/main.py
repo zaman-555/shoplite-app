@@ -14,9 +14,10 @@ from app.chaos import should_inject_error, should_inject_latency
 from app.config import Settings
 from app.db import PostgresDatabase
 from app.logging_config import setup_logging, trace_id_var
-from app.metrics import ORDERS_CREATED
+from app.metrics import ORDER_QUEUE_DEPTH, ORDERS_CREATED
 from app.middleware import ObservabilityMiddleware
 from app.queue import RedisQueue
+from app.tracing import inject_traceparent, setup_tracing, tracer
 
 logger = logging.getLogger("catalog-api")
 
@@ -51,6 +52,7 @@ def create_app(
     db = db or PostgresDatabase(settings.database_url)
     queue = queue or RedisQueue(settings.redis_url)
     setup_logging(settings.log_level)
+    setup_tracing(settings.service_name)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -132,13 +134,19 @@ def create_app(
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        order = await asyncio.to_thread(db.create_order, body.product_id, body.quantity)
+        with tracer().start_as_current_span("postgres create_order"):
+            order = await asyncio.to_thread(db.create_order, body.product_id, body.quantity)
         trace_id = getattr(request.state, "trace_id", None) or trace_id_var.get()
+        payload = {"order_id": order["id"], "trace_id": trace_id}
         try:
-            await asyncio.to_thread(
-                queue.enqueue,
-                {"order_id": order["id"], "trace_id": trace_id},
-            )
+            with tracer().start_as_current_span("redis enqueue") as span:
+                span.set_attribute("order.id", order["id"])
+                traceparent = inject_traceparent()
+                if traceparent:
+                    payload["traceparent"] = traceparent
+                await asyncio.to_thread(queue.enqueue, payload)
+                if hasattr(queue, "depth"):
+                    ORDER_QUEUE_DEPTH.set(queue.depth())
         except Exception as exc:
             logger.error("failed to enqueue order %s: %s", order["id"], exc)
             await asyncio.to_thread(db.mark_failed, order["id"])

@@ -13,3 +13,4 @@ terraform.tfvars
 backend.hcl
 ansible/kubeconfig
 ansible/.k3s-token
+helm/shoplite/values-secrets.yaml

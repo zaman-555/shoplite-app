@@ -21,12 +21,16 @@ terraform/
     └── ecr/                     web, catalog-api, order-worker
 ansible/
 ├── site.yml                     Harden, install containerd, start k3s, join the workers
-├── inventory/aws_ec2.yml
+├── inventory/aws_ec2.yml        Finds the running nodes through Session Manager
 ├── roles/
 │   ├── harden/                  SSH drop-in, ops group, log ACL, UFW, backup timer
 │   ├── container_runtime/       containerd
 │   └── k3s/                     Control plane, Traefik on 30080, worker join, kubeconfig
 └── scripts/ssm-port-forward.sh
+helm/shoplite/                   One chart for web, API, worker, Postgres, and Redis
+├── values.yaml                  Defaults used by every install
+├── values-dev.yaml              Smaller resources
+└── values-prod.yaml             ECR image names
 ```
 
 | Piece | Where it lives |
@@ -54,6 +58,8 @@ On your Mac:
 ```bash
 brew install hashicorp/tap/terraform
 brew install ansible
+brew install helm
+brew install kubectl
 brew install awscli
 brew install --cask session-manager-plugin
 python3.12 -m pip install --user boto3 botocore
@@ -66,11 +72,13 @@ Confirm:
 ```bash
 terraform version
 ansible --version
+helm version
+kubectl version --client
 aws --version
 session-manager-plugin --version
 ```
 
-`terraform version` should be 1.5 or newer.
+`terraform version` should be 1.5 or newer. `helm version` should print a client version.
 
 ## 2. Open the project and sign in to AWS
 
@@ -156,6 +164,8 @@ Save these values:
 
 The load balancer targets stay unhealthy until Ansible has started Traefik on port 30080. That is expected at this point.
 
+Ansible configures the three Ubuntu machines after Terraform has created them. It does not create the VPC or the instances. Helm installs the ShopLite pods after Ansible has built the Kubernetes cluster. Do the Ansible section before the Helm section.
+
 ## 6. Install the Ansible collections
 
 ```bash
@@ -165,9 +175,40 @@ ansible-galaxy collection install -r requirements.yml
 
 This installs `amazon.aws` and `community.general`.
 
-## 7. Run the playbook
+## 7. What the playbook changes
 
-Session Manager needs the nodes to register. Wait two or three minutes after apply, then:
+Ansible connects with Session Manager. The inventory hostname is the EC2 instance id. Do not set `ansible_host` to the private IP. The nodes have no public address and no SSH key.
+
+`ansible/site.yml` has three plays:
+
+| Play | Hosts | What it does |
+|---|---|---|
+| Harden and container runtime | control plane and both workers | `harden`, then `container_runtime` |
+| Bootstrap k3s | control plane only | `k3s` in server mode |
+| Join the workers | workers, one at a time | `k3s` in agent mode |
+
+`harden` applies the Ubuntu milestone on every node:
+
+- creates the `ops` group and a `deploy` user with a locked password
+- installs `linux/sshd_config` as `/etc/ssh/sshd_config.d/99-shoplite.conf`
+- creates `/var/log/shoplite` as root-owned mode `700`, then one `setfacl` granting `ops` read and execute
+- enables UFW for 22, 80, and 443, and also allows Kubernetes ports from the VPC
+- installs the backup script and timer. The timer is started on the control plane only
+
+`container_runtime` installs and starts `containerd`.
+
+`k3s` on the control plane installs k3s from the stable channel, publishes Traefik on NodePort 30080, and saves two files on your computer:
+
+| File | What it is |
+|---|---|
+| `ansible/kubeconfig` | Admin credentials. The server address is `https://127.0.0.1:6443` |
+| `ansible/.k3s-token` | Token the workers use to join. Both files are gitignored |
+
+The worker play reads that token and joins `https://<control-plane-private-ip>:6443`.
+
+## 8. Run the playbook
+
+Session Manager needs the nodes to register. Wait two or three minutes after apply, then from `ansible/`:
 
 ```bash
 export SSM_BUCKET="$(terraform -chdir=../terraform output -raw ansible_ssm_bucket)"
@@ -181,15 +222,9 @@ The graph lists one host under `control_plane` and two under `worker`. The host 
 ansible-playbook site.yml
 ```
 
-The playbook does three plays:
+The first run takes several minutes. A second run should change little: k3s is not reinstalled when it is already present.
 
-1. On every node: SSH drop-in, `ops` and `deploy`, the log directory ACL, UFW, the backup files, and containerd. The backup timer is started on the control plane only.
-2. On the control plane: install k3s from the stable channel, publish Traefik on NodePort 30080, and copy the kubeconfig to `ansible/kubeconfig`.
-3. On the workers, one at a time: join the cluster with the node token.
-
-`ansible/kubeconfig` and `ansible/.k3s-token` are gitignored. The kubeconfig points at `https://127.0.0.1:6443`.
-
-## 8. Open the cluster
+## 9. Open the cluster
 
 Leave this running in one terminal. It forwards the private API to your laptop:
 
@@ -205,21 +240,112 @@ cd ansible
 KUBECONFIG=./kubeconfig kubectl get nodes
 ```
 
-You should see the control plane and both workers `Ready`.
+You should see the control plane and both workers `Ready`. Leave the port-forward terminal open. `helm` and `kubectl` use that tunnel.
 
-The shop UI is the load balancer, after the targets are healthy:
+Traefik is listening on port 30080. The load balancer forwards public HTTP to that port. The shop pods are not installed yet, so the load balancer target can still look unhealthy.
+
+## 10. What the Helm chart installs
+
+Helm installs ShopLite into the cluster. The chart is one package, `helm/shoplite/`. Terraform and Ansible do not install these pods.
+
+| File | When to use it |
+|---|---|
+| `values.yaml` | Always. Replica counts, probes, the autoscaler, and the empty database password |
+| `values-dev.yaml` | A smaller practice install. Same replica rules, less CPU and memory |
+| `values-prod.yaml` | The AWS install. Image names point at ECR. Replace `000000000000` with your account id |
+| `values-secrets.yaml.example` | Optional copy if you want to choose the database password yourself. The real copy is gitignored |
+
+On install, Helm creates:
+
+| Workload | Kubernetes object | What to look for |
+|---|---|---|
+| web | Deployment, 2 replicas | Ingress path `/` |
+| catalog-api | Deployment, 2 replicas | Liveness `/healthz`, readiness `/readyz`, PodDisruptionBudget `minAvailable: 1`, Ingress path `/api` |
+| order-worker | Deployment plus CPU autoscaler | Minimum 1 replica, maximum 4, 90 seconds to finish an order on shutdown |
+| postgres | StatefulSet and a disk | `files/schema.sql` seeds the 12 products the first time the disk is empty |
+| redis | Deployment | ClusterIP Service only. No public port |
+
+The database password is generated into the Secret `shoplite-db`. It is not written into a file in Git. Application settings such as the log level and the tracing endpoint are in a ConfigMap. NetworkPolicy allows only `catalog-api` and `order-worker` to open Postgres and Redis. Every pod has CPU and memory requests and limits, and none run as root.
+
+## 11. Build the images and push them to ECR
+
+Run this from the project root. The account id is the same one from `aws sts get-caller-identity`.
 
 ```bash
-terraform -chdir=../terraform output -raw alb_dns_name
+docker compose build
+ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+REGISTRY="${ACCOUNT}.dkr.ecr.eu-central-1.amazonaws.com"
+aws ecr get-login-password --region eu-central-1 \
+  | docker login --username AWS --password-stdin "${REGISTRY}"
+docker tag shoplite-web:latest "${REGISTRY}/shoplite/web:latest"
+docker tag shoplite-catalog-api:latest "${REGISTRY}/shoplite/catalog-api:latest"
+docker tag shoplite-order-worker:latest "${REGISTRY}/shoplite/order-worker:latest"
+docker push "${REGISTRY}/shoplite/web:latest"
+docker push "${REGISTRY}/shoplite/catalog-api:latest"
+docker push "${REGISTRY}/shoplite/order-worker:latest"
 ```
 
-Open `http://` that name. Traefik answers before the ShopLite pods exist. Deploying the shop into the cluster is a later step. The load balancer is already aimed at the ingress.
+Edit `helm/shoplite/values-prod.yaml` and replace every `000000000000` with that account id. The nodes can pull from these repositories because Terraform attached the ECR read-only policy.
 
-## 9. Check the bill
+## 12. Install the chart
+
+Keep the Session Manager port-forward from step 9 running. In another terminal, from the project root:
+
+```bash
+export KUBECONFIG="$PWD/ansible/kubeconfig"
+helm upgrade --install shoplite helm/shoplite \
+  --namespace shoplite \
+  --create-namespace \
+  -f helm/shoplite/values.yaml \
+  -f helm/shoplite/values-prod.yaml
+kubectl get pods -n shoplite
+kubectl get ingress -n shoplite
+```
+
+Wait until the pods are `Running` and their Ready column matches the replica count. Postgres and the API can take a minute on the first start.
+
+```bash
+kubectl get pods -n shoplite
+terraform -chdir=terraform output -raw alb_dns_name
+```
+
+Open `http://` followed by that DNS name. Place an order in the browser. The status should move to `COMPLETED`. Direct API calls use the same host with the `/api` prefix, for example `http://<alb-dns-name>/api/products`.
+
+For a local practice cluster that already has the images, use `values-dev.yaml` instead of `values-prod.yaml`.
+
+## 13. Install monitoring
+
+```bash
+export GRAFANA_ADMIN_PASSWORD='choose-a-password'
+export ALERT_WEBHOOK_URL='https://your-webhook.example/alerts'
+chmod +x monitoring/install.sh
+./monitoring/install.sh
+```
+
+This installs kube-prometheus-stack, Loki, Promtail, and Tempo in the `monitoring` namespace. Grafana loads `monitoring/dashboards/shoplite-golden-signals.json`. Alerts in `monitoring/alert-rules/shoplite.yaml` point at the runbooks in `monitoring/runbooks/`. A log line's `trace_id` opens the matching Tempo trace, and latency panels include exemplars.
+
+## 14. Check the bill
 
 In the AWS console, open Billing and Budgets. The budget name is `shoplite-monthly`. The alarm address is the email from `terraform.tfvars`. Confirm the email when AWS sends the subscription message, or the alarm cannot notify you.
 
-## 10. Destroy the stack after grading
+## 15. CI and GitOps
+
+GitHub Actions lives in `.github/workflows/`. On a pull request it runs the unit tests. On a push to `main` it also publishes the three images. It then commits the new image tags into the second repository, `shoplite-gitops`, which is the folder next to this project. Argo CD watches that repository and installs the Helm chart. The workflows do not deploy to the cluster.
+
+Create the GitHub repository `shoplite-gitops` from `/Users/mohammaduzzaman/shoplite-gitops`. In the application repository settings, add:
+
+| Name | Kind | Value |
+|---|---|---|
+| `GITOPS_REPOSITORY` | variable | `your-user/shoplite-gitops` |
+| `GITOPS_TOKEN` | secret | a token that can push to that repository |
+| `ECR_REGISTRY` | variable | optional, `123456789012.dkr.ecr.eu-central-1.amazonaws.com` |
+| `AWS_ROLE_ARN` | secret | optional role used only when `ECR_REGISTRY` is set |
+
+Replace `REPLACE_ME` in `shoplite-gitops` before the first Argo CD sync. The one-time Argo CD install is in that repository's README. After the first sync, a push to `main` is enough: Actions publishes the images, updates `envs/dev/values.yaml` and `envs/prod/values.yaml`, and Argo CD rolls the pods.
+
+The diagram is `docs/architecture-diagram`. An example incident write-up is `docs/RCA`.
+
+## 16. Destroy the stack after grading
 
 Destroy the cluster before the state bucket. From `terraform/`:
 

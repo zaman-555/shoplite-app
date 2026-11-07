@@ -36,6 +36,9 @@ class RedisQueue:
         self._client().rpush(ORDERS_QUEUE_KEY, json.dumps(payload))
         logger.info("enqueued order %s", payload.get("order_id"))
 
+    def depth(self) -> int:
+        return int(self._client().llen(ORDERS_QUEUE_KEY))
+
     def _client(self) -> redis.Redis:
         if self.client is None:
             raise RuntimeError("queue is not connected")

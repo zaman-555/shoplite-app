@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shoplite.fullname" . }}-order-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: order-worker
+    {{- include "shoplite.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.orderWorker.autoscaling.minReplicas }}
+  selector:
+    matchLabels:
+      {{- include "shoplite.selector" (dict "name" "order-worker" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: order-worker
+        {{- include "shoplite.labels" . | nindent 8 }}
+    spec:
+      {{- include "shoplite.imagePullSecrets" . | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.orderWorker.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.security.appUser }}
+        runAsGroup: {{ .Values.security.appUser }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: order-worker
+          image: {{ .Values.images.orderWorker | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: 8001
+          env:
+            - name: SERVICE_NAME
+              value: order-worker
+            - name: METRICS_PORT
+              value: "8001"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "shoplite.fullname" . }}-db
+                  key: DATABASE_URL
+          envFrom:
+            - configMapRef:
+                name: {{ include "shoplite.fullname" . }}-config
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.security.appUser }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 20
+          {{- include "shoplite.resources" .Values.orderWorker.resources | nindent 10 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "shoplite.fullname" . }}-order-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: order-worker
+    {{- include "shoplite.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "shoplite.selector" (dict "name" "order-worker" "root" .) | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 8001
+      targetPort: metrics
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "shoplite.fullname" . }}-order-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: order-worker
+    {{- include "shoplite.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "shoplite.fullname" . }}-order-worker
+  minReplicas: {{ .Values.orderWorker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.orderWorker.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.orderWorker.autoscaling.targetCPUUtilizationPercentage }}

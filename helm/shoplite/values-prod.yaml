@@ -1,0 +1,37 @@
+# Replace 000000000000 with the account id from terraform output ecr_repository_urls.
+imagePullPolicy: Always
+
+images:
+  web: 000000000000.dkr.ecr.eu-central-1.amazonaws.com/shoplite/web:latest
+  catalogApi: 000000000000.dkr.ecr.eu-central-1.amazonaws.com/shoplite/catalog-api:latest
+  orderWorker: 000000000000.dkr.ecr.eu-central-1.amazonaws.com/shoplite/order-worker:latest
+
+postgres:
+  storage: 10Gi
+
+web:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+catalogApi:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+orderWorker:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi

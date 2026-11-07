@@ -39,10 +39,23 @@ class RedisQueue:
         self._client().lpush(ORDERS_QUEUE_KEY, raw)
         logger.info("requeued order message")
 
+    def depth(self) -> int:
+        return int(self._client().llen(ORDERS_QUEUE_KEY))
+
     def _client(self) -> redis.Redis:
         if self.client is None:
             raise RuntimeError("queue is not connected")
         return self.client
+
+
+def trace_carrier(raw: str) -> dict:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, dict) and data.get("traceparent"):
+        return {"traceparent": str(data["traceparent"])}
+    return {}
 
 
 def parse_message(raw: str) -> tuple[int, str]:

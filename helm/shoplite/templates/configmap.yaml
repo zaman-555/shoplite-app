@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "shoplite.fullname" . }}-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shoplite.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  CHAOS_LATENCY_MS: {{ .Values.config.chaosLatencyMs | quote }}
+  CHAOS_ERROR_RATE: {{ .Values.config.chaosErrorRate | quote }}
+  CHAOS_MEMORY_LEAK: {{ .Values.config.chaosMemoryLeak | quote }}
+  CHAOS_SLOW_DB: {{ .Values.config.chaosSlowDb | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otelEndpoint | quote }}
+  REDIS_URL: {{ printf "redis://%s-redis:6379/0" (include "shoplite.fullname" .) | quote }}
+  POSTGRES_HOST: {{ printf "%s-postgres" (include "shoplite.fullname" .) | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "shoplite.fullname" . }}-schema
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shoplite.labels" . | nindent 4 }}
+data:
+  01-schema.sql: |
+{{ .Files.Get "files/schema.sql" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "shoplite.fullname" . }}-web
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shoplite.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 120s;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        location /products {
+            set $upstream {{ include "shoplite.fullname" . }}-catalog-api.{{ .Values.namespace }}.svc.cluster.local:8000;
+            proxy_pass http://$upstream;
+        }
+        location /orders {
+            set $upstream {{ include "shoplite.fullname" . }}-catalog-api.{{ .Values.namespace }}.svc.cluster.local:8000;
+            proxy_pass http://$upstream;
+        }
+        location = /healthz {
+            set $upstream {{ include "shoplite.fullname" . }}-catalog-api.{{ .Values.namespace }}.svc.cluster.local:8000;
+            proxy_pass http://$upstream;
+        }
+        location = /readyz {
+            set $upstream {{ include "shoplite.fullname" . }}-catalog-api.{{ .Values.namespace }}.svc.cluster.local:8000;
+            proxy_pass http://$upstream;
+        }
+        location = /metrics {
+            set $upstream {{ include "shoplite.fullname" . }}-catalog-api.{{ .Values.namespace }}.svc.cluster.local:8000;
+            proxy_pass http://$upstream;
+        }
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }

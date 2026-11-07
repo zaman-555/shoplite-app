@@ -1,0 +1,151 @@
+{
+  "uid": "shoplite-golden-signals",
+  "title": "ShopLite — Golden Signals",
+  "tags": ["shoplite"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Request latency by route",
+      "description": "p50, p95, and p99 of http_request_duration_seconds. Exemplars open the Tempo trace.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 10}}},
+      "targets": [
+        {
+          "refId": "p50",
+          "exemplar": true,
+          "legendFormat": "p50 {{route}}",
+          "expr": "histogram_quantile(0.50, sum by (le, route) (rate(http_request_duration_seconds_bucket{namespace=\"shoplite\"}[5m])))"
+        },
+        {
+          "refId": "p95",
+          "exemplar": true,
+          "legendFormat": "p95 {{route}}",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket{namespace=\"shoplite\"}[5m])))"
+        },
+        {
+          "refId": "p99",
+          "exemplar": true,
+          "legendFormat": "p99 {{route}}",
+          "expr": "histogram_quantile(0.99, sum by (le, route) (rate(http_request_duration_seconds_bucket{namespace=\"shoplite\"}[5m])))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Requests per second",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "targets": [
+        {
+          "refId": "rps",
+          "legendFormat": "{{method}} {{route}} {{status}}",
+          "expr": "sum by (method, route, status) (rate(http_requests_total{namespace=\"shoplite\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "HTTP 5xx error rate",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}},
+      "targets": [
+        {
+          "refId": "errors",
+          "legendFormat": "5xx rate",
+          "expr": "sum(rate(http_requests_total{namespace=\"shoplite\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{namespace=\"shoplite\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "CPU usage per pod",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [
+        {
+          "refId": "cpu",
+          "legendFormat": "{{pod}}",
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"shoplite\",container!=\"\",container!=\"POD\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Memory usage per pod",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}},
+      "targets": [
+        {
+          "refId": "memory",
+          "legendFormat": "{{pod}}",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"shoplite\",container!=\"\",container!=\"POD\"})"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Order queue depth",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [
+        {
+          "refId": "depth",
+          "legendFormat": "orders:pending",
+          "expr": "max(order_queue_depth{namespace=\"shoplite\"})"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Worker replica count",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}},
+      "targets": [
+        {
+          "refId": "replicas",
+          "legendFormat": "available",
+          "expr": "kube_deployment_status_replicas_available{namespace=\"shoplite\",deployment=~\".*order-worker\"}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Orders created versus orders processed",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "targets": [
+        {
+          "refId": "created",
+          "legendFormat": "created",
+          "expr": "sum(rate(orders_created_total{namespace=\"shoplite\"}[5m]))"
+        },
+        {
+          "refId": "processed",
+          "legendFormat": "processed {{result}}",
+          "expr": "sum by (result) (rate(orders_processed_total{namespace=\"shoplite\"}[5m]))"
+        }
+      ]
+    }
+  ]
+}

@@ -3,14 +3,17 @@ import random
 import signal
 import threading
 import time
+from wsgiref.simple_server import make_server
 
-from prometheus_client import start_http_server
+from opentelemetry.propagate import extract
+from prometheus_client import make_wsgi_app
 
 from config import Settings
 from db import PostgresDatabase
 from logging_config import setup_logging, trace_id_var
-from metrics import ORDER_PROCESSING_SECONDS, ORDERS_IN_PROGRESS, ORDERS_PROCESSED
-from orders_queue import RedisQueue, parse_message
+from metrics import ORDER_PROCESSING_SECONDS, ORDER_QUEUE_DEPTH, ORDERS_IN_PROGRESS, ORDERS_PROCESSED
+from orders_queue import RedisQueue, parse_message, trace_carrier
+from tracing import exemplar, setup_tracing, tracer
 
 logger = logging.getLogger("order-worker")
 
@@ -32,17 +35,29 @@ def process_message(db, raw: str, settings: Settings, sleeper=time.sleep, unifor
         logger.error("discarding invalid queue message: %s", exc)
         return None
 
+    span_tracer = tracer()
+    with span_tracer.start_as_current_span("process order", context=extract(trace_carrier(raw))) as span:
+        span_context = span.get_span_context()
+        if span_context.is_valid:
+            trace_id = format(span_context.trace_id, "032x")
+        span.set_attribute("order.id", order_id)
+        return _process_claimed(db, order_id, trace_id, settings, sleeper, uniform, span_tracer)
+
+
+def _process_claimed(db, order_id, trace_id, settings, sleeper, uniform, span_tracer):
     token = trace_id_var.set(trace_id)
     started = time.perf_counter()
     ORDERS_IN_PROGRESS.inc()
     try:
-        claimed = db.claim_order(order_id)
+        with span_tracer.start_as_current_span("postgres claim_order"):
+            claimed = db.claim_order(order_id)
         if not claimed:
             logger.info("skipping order %s because it is not pending", order_id)
             return None
 
         sleeper(uniform(1.0, 2.0))
-        status = db.finish_order(order_id)
+        with span_tracer.start_as_current_span("postgres finish_order"):
+            status = db.finish_order(order_id)
         if settings.chaos_memory_leak:
             leaked_orders.append(
                 {
@@ -52,8 +67,13 @@ def process_message(db, raw: str, settings: Settings, sleeper=time.sleep, unifor
                     "padding": "x" * (64 * 1024),
                 }
             )
-        ORDERS_PROCESSED.labels(status=status).inc()
-        ORDER_PROCESSING_SECONDS.observe(time.perf_counter() - started)
+        ORDERS_PROCESSED.labels(result=status).inc()
+        sample = exemplar()
+        elapsed = time.perf_counter() - started
+        if sample:
+            ORDER_PROCESSING_SECONDS.observe(elapsed, exemplar=sample)
+        else:
+            ORDER_PROCESSING_SECONDS.observe(elapsed)
         logger.info("order %s %s", order_id, status)
         return status
     except Exception as exc:
@@ -62,7 +82,7 @@ def process_message(db, raw: str, settings: Settings, sleeper=time.sleep, unifor
             db.mark_failed(order_id)
         except Exception as mark_exc:
             logger.error("could not mark order %s failed: %s", order_id, mark_exc)
-        ORDERS_PROCESSED.labels(status="FAILED").inc()
+        ORDERS_PROCESSED.labels(result="FAILED").inc()
         return "FAILED"
     finally:
         ORDERS_IN_PROGRESS.dec()
@@ -71,6 +91,12 @@ def process_message(db, raw: str, settings: Settings, sleeper=time.sleep, unifor
 
 def run_loop(queue, handle, shutdown: threading.Event) -> None:
     while not shutdown.is_set():
+        depth = getattr(queue, "depth", None)
+        if depth is not None:
+            try:
+                ORDER_QUEUE_DEPTH.set(depth())
+            except Exception as exc:
+                logger.error("queue depth failed: %s", exc)
         try:
             raw = queue.dequeue(timeout=1)
         except Exception as exc:
@@ -96,7 +122,9 @@ def main() -> None:
     db.connect()
     db.init_schema()
     queue.connect()
-    start_http_server(settings.metrics_port)
+    setup_tracing(settings.service_name)
+    metrics_server = make_server("", settings.metrics_port, make_wsgi_app())
+    threading.Thread(target=metrics_server.serve_forever, daemon=True).start()
 
     shutdown = threading.Event()
     handler = make_signal_handler(shutdown)

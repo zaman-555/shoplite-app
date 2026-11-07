@@ -1,0 +1,74 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shoplite
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+    project: shoplite
+spec:
+  groups:
+    - name: shoplite
+      rules:
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{namespace="shoplite",status=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{namespace="shoplite"}[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: Critical
+            runbook_url: monitoring/runbooks/high-error-rate.md
+          annotations:
+            summary: HTTP 5xx rate is above 5 percent
+            runbook_url: monitoring/runbooks/high-error-rate.md
+        - alert: HighLatency
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{namespace="shoplite"}[5m]))
+            ) > 1
+          for: 5m
+          labels:
+            severity: Warning
+            runbook_url: monitoring/runbooks/high-latency.md
+          annotations:
+            summary: p95 latency is above 1 second
+            runbook_url: monitoring/runbooks/high-latency.md
+        - alert: QueueBacklog
+          expr: max(order_queue_depth{namespace="shoplite"}) > 50
+          for: 10m
+          labels:
+            severity: Warning
+            runbook_url: monitoring/runbooks/queue-backlog.md
+          annotations:
+            summary: The order queue has more than 50 waiting orders
+            runbook_url: monitoring/runbooks/queue-backlog.md
+        - alert: PodCrashLooping
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="shoplite"}[10m]) > 0
+          for: 10m
+          labels:
+            severity: Critical
+            runbook_url: monitoring/runbooks/pod-crash-looping.md
+          annotations:
+            summary: A ShopLite pod is restarting
+            runbook_url: monitoring/runbooks/pod-crash-looping.md
+        - alert: NodeDiskFilling
+          expr: |
+            (
+              1 - (
+                node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|ramfs",mountpoint!~"/run.*"}
+                /
+                node_filesystem_size_bytes{fstype!~"tmpfs|overlay|ramfs",mountpoint!~"/run.*"}
+              )
+            ) > 0.85
+          for: 10m
+          labels:
+            severity: Warning
+            runbook_url: monitoring/runbooks/node-disk-filling.md
+          annotations:
+            summary: A node filesystem is more than 85 percent full
+            runbook_url: monitoring/runbooks/node-disk-filling.md

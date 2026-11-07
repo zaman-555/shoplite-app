@@ -1,0 +1,94 @@
+namespace: shoplite
+createNamespace: true
+imagePullPolicy: IfNotPresent
+imagePullSecrets: []
+
+images:
+  web: shoplite-web:latest
+  catalogApi: shoplite-catalog-api:latest
+  orderWorker: shoplite-order-worker:latest
+  postgres: postgres:16-alpine
+  redis: redis:7-alpine
+
+security:
+  webUser: 101
+  appUser: 10001
+  postgresUser: 70
+  redisUser: 999
+
+# Leave the password empty. Helm generates one on install and keeps it in the
+# Secret. Pass --set secrets.postgresPassword only from a shell variable.
+secrets:
+  postgresUser: shoplite
+  postgresDatabase: shoplite
+  postgresPassword: ""
+
+config:
+  logLevel: INFO
+  chaosLatencyMs: "0"
+  chaosErrorRate: "0"
+  chaosMemoryLeak: "false"
+  chaosSlowDb: "false"
+  otelEndpoint: http://tempo.monitoring.svc.cluster.local:4318
+
+web:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+catalogApi:
+  replicas: 2
+  pdbMinAvailable: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+orderWorker:
+  terminationGracePeriodSeconds: 90
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+
+postgres:
+  storage: 5Gi
+  storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+ingress:
+  className: traefik
+  host: ""
+
+metrics:
+  serviceMonitor: true

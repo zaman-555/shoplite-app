@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shoplite.fullname" . }}-catalog-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: catalog-api
+    {{- include "shoplite.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.catalogApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "shoplite.selector" (dict "name" "catalog-api" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalog-api
+        {{- include "shoplite.labels" . | nindent 8 }}
+    spec:
+      {{- include "shoplite.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.security.appUser }}
+        runAsGroup: {{ .Values.security.appUser }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: catalog-api
+          image: {{ .Values.images.catalogApi | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: SERVICE_NAME
+              value: catalog-api
+            - name: PORT
+              value: "8000"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "shoplite.fullname" . }}-db
+                  key: DATABASE_URL
+          envFrom:
+            - configMapRef:
+                name: {{ include "shoplite.fullname" . }}-config
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.security.appUser }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          {{- include "shoplite.resources" .Values.catalogApi.resources | nindent 10 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "shoplite.fullname" . }}-catalog-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: catalog-api
+    {{- include "shoplite.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "shoplite.selector" (dict "name" "catalog-api" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "shoplite.fullname" . }}-catalog-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: catalog-api
+    {{- include "shoplite.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.catalogApi.pdbMinAvailable }}
+  selector:
+    matchLabels:
+      {{- include "shoplite.selector" (dict "name" "catalog-api" "root" .) | nindent 6 }}

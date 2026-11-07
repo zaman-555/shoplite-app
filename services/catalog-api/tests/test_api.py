@@ -87,6 +87,9 @@ class FakeQueue:
             raise ConnectionError("redis down")
         self.items.append(payload)
 
+    def depth(self):
+        return len(self.items)
+
 
 class FakeRedis:
     def __init__(self):
@@ -179,7 +182,10 @@ def test_post_order_creates_pending_order_and_enqueues(client, fake_queue):
     assert body["quantity"] == 2
     assert body["status"] == "PENDING"
     assert body["completed_at"] is None
-    assert fake_queue.items == [{"order_id": 1, "trace_id": response.headers["x-trace-id"]}]
+    item = fake_queue.items[0]
+    assert item["order_id"] == 1
+    assert item["trace_id"] == response.headers["x-trace-id"]
+    assert item["traceparent"].startswith(f"00-{item['trace_id']}-")
     after = metric_value(client.get("/metrics").text, "orders_created_total")
     assert after == before + 1
 
@@ -240,17 +246,26 @@ def test_readyz_when_queue_is_down(client, fake_queue):
 
 
 def test_metrics_exposes_prometheus_text(client):
+    client.get("/healthz")
     response = client.get("/metrics")
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
     assert "http_requests_total" in response.text
     assert "http_request_duration_seconds" in response.text
     assert "orders_created_total" in response.text
+    assert "orders_processed_total" in response.text
+    assert "order_queue_depth" in response.text
+    assert "order_processing_seconds" in response.text
+    assert 'route="' in response.text
 
 
-def test_trace_id_comes_from_request_header(client):
-    response = client.get("/healthz", headers={"X-Request-ID": "trace-123"})
-    assert response.headers["x-trace-id"] == "trace-123"
+def test_traceparent_is_continued(client):
+    trace_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+    response = client.get(
+        "/healthz",
+        headers={"traceparent": f"00-{trace_id}-00f067aa0ba902b7-01"},
+    )
+    assert response.headers["x-trace-id"] == trace_id
 
 
 def test_queue_failure_marks_order_failed(fake_db, fake_queue):
