@@ -1,0 +1,8 @@
+# ShopLite SSH drop-in.
+# Install as /etc/ssh/sshd_config.d/99-shoplite.conf
+# Do not replace the main /etc/ssh/sshd_config.
+
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes

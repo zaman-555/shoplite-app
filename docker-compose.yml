@@ -1,0 +1,118 @@
+name: shoplite
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shoplite
+      POSTGRES_PASSWORD: shoplite
+      POSTGRES_DB: shoplite
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/catalog-api/app/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shoplite -d shoplite"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  catalog-api:
+    build:
+      context: .
+      dockerfile: services/catalog-api/Dockerfile
+    environment:
+      SERVICE_NAME: catalog-api
+      DATABASE_URL: postgresql://shoplite:shoplite@postgres:5432/shoplite
+      REDIS_URL: redis://redis:6379/0
+      PORT: "8000"
+      LOG_LEVEL: INFO
+      # Fault injection is off unless these are changed.
+      CHAOS_LATENCY_MS: "0"
+      CHAOS_ERROR_RATE: "0"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  order-worker:
+    build:
+      context: .
+      dockerfile: services/order-worker/Dockerfile
+    environment:
+      SERVICE_NAME: order-worker
+      DATABASE_URL: postgresql://shoplite:shoplite@postgres:5432/shoplite
+      REDIS_URL: redis://redis:6379/0
+      SCHEMA_PATH: /app/schema.sql
+      METRICS_PORT: "8001"
+      LOG_LEVEL: INFO
+      # Fault injection is off unless these are changed.
+      CHAOS_MEMORY_LEAK: "false"
+      CHAOS_SLOW_DB: "false"
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/metrics')",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: services/web/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      catalog-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

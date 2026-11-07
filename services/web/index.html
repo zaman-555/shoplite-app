@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShopLite</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">Catalog</p>
+      <h1>ShopLite</h1>
+    </div>
+    <p class="lede">List products, place an order, and watch it move from pending to complete.</p>
+  </header>
+
+  <main>
+    <section class="panel" aria-labelledby="products-heading">
+      <div class="section-head">
+        <h2 id="products-heading">Products</h2>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+      <p id="product-message" class="message" role="status"></p>
+      <div id="products" class="product-grid"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="orders-heading">
+      <h2 id="orders-heading">Orders</h2>
+      <form id="lookup" class="lookup">
+        <label for="order-id">Order ID</label>
+        <div class="lookup-row">
+          <input id="order-id" name="order-id" inputmode="numeric" pattern="[0-9]+" required>
+          <button type="submit">View status</button>
+        </div>
+      </form>
+      <p id="order-message" class="message" role="status"></p>
+      <div id="orders" class="order-list"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
